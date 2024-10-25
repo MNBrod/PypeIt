@@ -44,7 +44,7 @@ import glob
 import os
 import numpy as np
 from pathlib import Path
-
+import subprocess
 from ginga import GingaPlugin
 from ginga.misc import Bunch
 from ginga.gw import Widgets
@@ -98,7 +98,7 @@ class QLView(GingaPlugin.LocalPlugin):
         self.keywords = self.settings.get('keywords', keywords)
         self.columns = self.settings.get('columns', columns)
 
-        self.raw_path = None
+        self.raw_filepath = None
         self.reduced_filepath = None
         # self.data_source = LocalDataSource(self.logger, "DEIMOS")
 
@@ -218,6 +218,7 @@ class QLView(GingaPlugin.LocalPlugin):
         hbox.add_widget(self.slit_list_box)
         self.btn_reduce = Widgets.Button("Reduce Slit")
         self.btn_reduce.set_tooltip("Reduce the selected slit")
+        self.btn_reduce.add_callback('activated', self.reduce_slit_cb)
         hbox.add_widget(self.btn_reduce, stretch=0)
         vbox_redux.add_widget(hbox, stretch=0)
 
@@ -257,6 +258,37 @@ class QLView(GingaPlugin.LocalPlugin):
     # # # # # # #
     # Callbacks #
     # # # # # # #
+
+    def reduce_slit_cb(self, w):
+        # Launch the reduction using popen:
+
+        msc = self.slittracesets
+        for msc_idx in self.slittracesets.keys():
+            
+            slittrace = self.slittracesets[msc_idx]
+            spatial_ids = slittrace.spat_id
+
+            for idx, spat_id in enumerate(spatial_ids):
+                if self.slit_list_box.get_text() == f"S{spat_id}":
+                    msc = f"MSC{msc_idx}"
+                    
+
+
+        command = ["pypeit_ql"]
+        command.append(self.instrument.pypeit_name)
+        command.append("--raw_files")
+        command.append(str(Path(self.raw_filepath).name))
+        command.append("--raw_path")
+        command.append(str(Path(self.raw_filepath).parent.absolute()))
+        command.append("--setup_calib_dir")
+        command.append(f"{Path(self.reduced_filepath).absolute()}/Calibrations")
+        command.append("--slitspatnum")
+        command.append(f"{msc}:{self.slit_list_box.get_text()[1:]}")
+        command.append("--redux_path")
+        command.append("/Users/mbrodheim/drp/QLViewer/redux_test")
+        command.append("--skip_display")
+        self.logger.info("Launching command: {0}".format(" ".join(command)))
+        p = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     def slit_list_box_cb(self, w, res_dict):
         self.deactivate_slit()
@@ -350,6 +382,7 @@ class QLView(GingaPlugin.LocalPlugin):
         else:
             self.logger.error("Invalid path entered.")
             self.raw_text_entry.set_text("Invalid path")
+        self.raw_filepath = path
 
         # TODO: Handle the double-click event to load the FITS file
 
@@ -365,6 +398,7 @@ class QLView(GingaPlugin.LocalPlugin):
             return
         path = paths[0]
         self.raw_text_entry.set_text(path)
+        self.raw_filepath = path
 
         # Don't load the file, but do display some metadata!
 
@@ -773,63 +807,7 @@ class QLView(GingaPlugin.LocalPlugin):
         """Method called when a new FITS image or extension is loaded into the
         channel.
         """
-        # if not self.gui_up:
-        #     return
-        
-        # # self.logger.debug(f"Processing file: {raw_filepath}")
-
-        # dataobj = self.channel.get_current_image()
-        # # if not isinstance(dataobj, AstroTable):
-        # #     # NOTE: do we need a better test here for a 1D data item?
-        # #     return
-
-        # raw_path = dataobj.get('path', None)
-        # if raw_path is None:
-        #     self.fv.show_error(
-        #         "Cannot open dataobj: no value for metadata key 'path'")
-        #     return
-
-        # self.filepath_entry.set_text(raw_path)
-
-        # if not isinstance(self.data_source, LocalDataSource):
-        #     self.logger.info("Data source is not a LocalDataSource, but a file was dragged in. Changing DataSource to LocalDataSource.")
-        #     self.data_source = LocalDataSource(logger=self.logger)
-        
-        # # Check to see if there's an obvious reduced file, otherwise skip loading the slits
-        # reduced_path = Path(raw_path).parent
-        # glob = reduced_path.glob('Slits_*.fits*')
-        # if len(list(glob)) == 0:
-        #     reduced_path = None
-        # self.data_source.load(raw_path, reduced_path)
-        # # self.recalc()
-
-        # # add the plot to this channel
-        # self.display_image()
-
-    def set_filepath_cb(self, w):
-        """Callback for changing the path in the UI.
-
-        Try to process the new file.
-        """
-        filepath = w.get_text().strip()
-        # TODO: Update to use the DataSource object
-
-        self.display_image()
-        # self.process_file(filepath)
-
-    def set_exten_cb(self, w, val):
-        """Callback for changing the extension in the UI.
-
-        Try to process the new extension.
-        """
-        self.exten = val
-        self.recalc()
-
-    def plot_error_cb(self, w, val):
-        """Callback for toggling the "Plot Error" checkbox in the UI.
-        """
-        self.settings.set(plot_error=val)
-        self.recalc()
+        pass
 
     def __str__(self):
         # necessary to identify the plugin and provide correct operation in Ginga
@@ -839,6 +817,7 @@ class QLView(GingaPlugin.LocalPlugin):
 # # # # # # # # # # # # # # # #
 # Instrument-specific classes #
 # # # # # # # # # # # # # # # #
+
 class Instrument():
     """
     Class that generalizes instrument-specific information for the QL viewer.
@@ -870,6 +849,7 @@ class DEIMOS(Instrument):
 
     def __init__(self, logger) -> None:
         super().__init__(logger)
+        self.pypeit_name = "keck_deimos"
 
     def get_mosaic(self, hdul) -> np.ndarray:
         """Return a mosaiced image from the DEIMOS HDUList.
