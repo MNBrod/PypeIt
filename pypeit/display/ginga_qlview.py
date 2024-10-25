@@ -45,6 +45,7 @@ import os
 import numpy as np
 from pathlib import Path
 import subprocess
+import threading
 from ginga import GingaPlugin
 from ginga.misc import Bunch
 from ginga.gw import Widgets
@@ -186,7 +187,7 @@ class QLView(GingaPlugin.LocalPlugin):
         vbox.add_widget(fr, stretch=0)
 
         # Finalize the reduced file tree and add it to the UI
-        fr = Widgets.Frame("Reduced Data")
+        fr = Widgets.Frame("Reduced Calibrations")
         fr_vbox = Widgets.VBox()       
         self.reduced_treeview.setup_table(self.settings.get('columns'), 1, 'name')
         self.reduced_treeview.add_callback('selected', self.reduced_table_selected_cb)
@@ -194,7 +195,7 @@ class QLView(GingaPlugin.LocalPlugin):
         fr_vbox.add_widget(self.reduced_treeview, stretch=1)
         
         hbox_reduced = Widgets.HBox()
-        hbox_reduced.add_widget(Widgets.Label("Reduced Data Path:"), stretch=0)
+        hbox_reduced.add_widget(Widgets.Label("Reduced Cals Path:"), stretch=0)
         self.reduced_text_entry = Widgets.TextEntry()
         hbox_reduced.add_widget(self.reduced_text_entry, stretch=0)
         self.reduced_btn = Widgets.Button("Render Slits")
@@ -210,7 +211,6 @@ class QLView(GingaPlugin.LocalPlugin):
         # Reduction Control #
         # # # # # # # # # # #
         fr = Widgets.Frame("Reduction Control")
-
         hbox = Widgets.HBox()
         vbox_redux = Widgets.VBox()
         self.slit_list_box = Widgets.ComboBox()
@@ -225,6 +225,7 @@ class QLView(GingaPlugin.LocalPlugin):
         self.display_slits_box = Widgets.CheckBox("Display Slits")
         self.display_slits_box.set_state(True)
         self.display_slits_box.add_callback('activated', self.display_slits_box_cb)
+
         vbox_redux.add_widget(self.display_slits_box, stretch=0)
 
         fr.set_widget(vbox_redux)
@@ -288,7 +289,15 @@ class QLView(GingaPlugin.LocalPlugin):
         command.append("/Users/mbrodheim/drp/QLViewer/redux_test")
         command.append("--skip_display")
         self.logger.info("Launching command: {0}".format(" ".join(command)))
+
+
+        # popenplus(self.show_reduced_spec, command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         p = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+        # out, err = p.communicate()
+
+        # while p.poll() is None:
+        #     time.sleep(0.1)
 
     def slit_list_box_cb(self, w, res_dict):
         self.deactivate_slit()
@@ -765,7 +774,6 @@ class QLView(GingaPlugin.LocalPlugin):
         pass
         # self.channel.add_image()
 
-
     def recalc(self):
         """Reprocess the chosen extension, based on current choices for extraction
         method, fluxing and masking.
@@ -808,6 +816,12 @@ class QLView(GingaPlugin.LocalPlugin):
         channel.
         """
         pass
+
+    def show_reduced_spec(self):
+        """Show the reduced spectrum in a new channel"""
+        new_ch_name = 'Spec1D'
+        self.fv.load_file("/Users/mbrodheim/drp/QLViewer/redux_test/DE.20170425.51771/Science/spec1d_DE.20170425.51771-dra11_DEIMOS_20170425T142245.350.fits", chname=new_ch_name)
+        self.fv.start_local_plugin(new_ch_name, 'Spec1dView')
 
     def __str__(self):
         # necessary to identify the plugin and provide correct operation in Ginga
@@ -911,3 +925,22 @@ class DEIMOS(Instrument):
         # fulldata = np.rot90(fulldata)
         
         return fulldata
+
+class popen_w_cb():
+    """Mirrors Popen, but with a callback for when the process finishes.
+    This doesn't actually work since the callback is executed in the thread, though
+    """
+
+    def __init__(self, onExit, *popenArgs, **popenKWArgs):
+        thread = threading.Thread(target=self.runInThread, args=(onExit, popenArgs, popenKWArgs))
+        thread.start()
+
+    def runInThread(self, onExit, popenArgs, popenKWArgs):
+        self.proc = subprocess.Popen(*popenArgs, **popenKWArgs)
+        self.proc.wait()
+        self.proc = None
+        onExit()
+
+    def stop(self):
+        if self.proc:
+            self.proc.kill()
