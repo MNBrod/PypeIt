@@ -115,7 +115,9 @@ class QLView(GingaPlugin.LocalPlugin):
         # self.plot = None
         self.gui_up = False
         self.slit_canvas = None
-        self.slits = None
+        self.slittracesets = None
+        self.active_slit = None
+        self.slit_polys = {}
 
     def build_gui(self, container):
         """Construct the UI in the plugin container.
@@ -212,6 +214,7 @@ class QLView(GingaPlugin.LocalPlugin):
         hbox = Widgets.HBox()
         vbox_redux = Widgets.VBox()
         self.slit_list_box = Widgets.ComboBox()
+        self.slit_list_box.add_callback('activated', self.slit_list_box_cb)
         hbox.add_widget(self.slit_list_box)
         self.btn_reduce = Widgets.Button("Reduce Slit")
         self.btn_reduce.set_tooltip("Reduce the selected slit")
@@ -254,6 +257,13 @@ class QLView(GingaPlugin.LocalPlugin):
     # # # # # # #
     # Callbacks #
     # # # # # # #
+
+    def slit_list_box_cb(self, w, res_dict):
+        self.deactivate_slit()
+        slit = self.slit_polys[w.get_text()]
+        self.active_slit = slit
+        self.activate_slit()
+
 
     def display_slits_box_cb(self, w, val):
         """Callback for the "Display Slits" checkbox in the Reduction Control frame.
@@ -368,8 +378,8 @@ class QLView(GingaPlugin.LocalPlugin):
         """
         self.logger.debug(f"Render Slits called with reduced path {self.reduced_filepath}")
 
-        self.slits = self.open_slits_files(os.path.join(self.reduced_filepath, "Calibrations"))
-        self.slit_canvas = self.construct_slits(self.slits)
+        self.slittracesets = self.open_slits_files(os.path.join(self.reduced_filepath, "Calibrations"))
+        self.slit_canvas = self.construct_slits(self.slittracesets)
         
         # TODO: Check to see if an image has been rendered yet
         if self.fitsimage.get_canvas() is not None:
@@ -407,11 +417,11 @@ class QLView(GingaPlugin.LocalPlugin):
     def canvas_clicked_cb(self, canvas, pnt, x, y):
         self.logger.info("Canvas clicked! X: {0}, Y: {1}".format(x, y))
 
-        if self.slits is None:
+        if self.slittracesets is None:
             self.logger.error("No slits have been loaded yet.")
             return
-        for msc_idx in self.slits.keys():
-            slits = self.slits[msc_idx]
+        for msc_idx in self.slittracesets.keys():
+            slits = self.slittracesets[msc_idx]
             if slits is None:
                 continue
             offset = (int(msc_idx) - 1) * slits.nspat
@@ -422,7 +432,13 @@ class QLView(GingaPlugin.LocalPlugin):
                 if left_bound_at_y[i] < x < right_bound_at_y[i]:
                     slit_id = slits.spat_id[i]
                     self.logger.info("Found slit {0}".format(slit_id))
-                    # self.slit_list.show_text(f"S{slit_id}")
+                    self.slit_list_box.show_text(f"S{slit_id}")
+                    try:
+                        self.deactivate_slit()
+                        self.active_slit = self.slit_polys[f"S{slit_id}"]
+                        self.activate_slit()
+                    except KeyError:
+                        self.logger.error(f"Slit {slit_id} not found in rendered slits!")
                     break
 
     # # # # # # #
@@ -627,20 +643,44 @@ class QLView(GingaPlugin.LocalPlugin):
             slittrace = slittraceset_dict[msc_idx]
             spatial_ids = slittrace.spat_id
             left_init = slittrace.left_init.T
-            y_values_left = np.arange(slittrace.nspec)[::10]
+            sampling = 200
+            y_values_left = np.arange(slittrace.nspec)[::sampling]
             right_init = slittrace.right_init.T
-            y_values_right = np.arange(slittrace.nspec)[::-10]
+            y_values_right = np.arange(slittrace.nspec)[::-sampling]
 
             for idx, spat_id in enumerate(spatial_ids):
-                # TODO: Make a slit list in the GUI and add each slit to it
+                self.slit_list_box.append_text(f"S{spat_id}")
 
-                x_vals = np.concatenate((left_init[idx][::10], right_init[idx][::-10]), axis=0) + ((int(msc_idx) - 1) * slittrace.nspat)
+                x_vals = np.concatenate((left_init[idx][::sampling], right_init[idx][::-sampling]), axis=0) + ((int(msc_idx) - 1) * slittrace.nspat)
                 y_vals = np.concatenate((y_values_left, y_values_right), axis=0)
                 slit_boundard_coords = (x_vals, y_vals)
-                poly = Polygon(list(zip(slit_boundard_coords[0], slit_boundard_coords[1])), color='green', linewidth=1, fill=True, fillalpha=.1)
+                poly = Polygon(list(zip(slit_boundard_coords[0], slit_boundard_coords[1])), color='green', linewidth=1, fill=True, fillalpha=.05)
                 slit_polys.add(poly)
+                self.slit_polys[f"S{spat_id}"] = poly
 
         return slit_polys
+    
+    def activate_slit(self):
+        if self.active_slit is None:
+            self.logger.error("No active slit selected.")
+            return
+        self.logger.info(f"Activating slit {self.active_slit}")
+        active_slit = self.slit_canvas.get_object_by_tag(self.active_slit.tag)
+        active_slit.color = 'blue'
+        self.slit_canvas.delete_object_by_tag(self.active_slit.tag)
+        self.slit_canvas.add(active_slit)
+    
+    def deactivate_slit(self):
+        if self.active_slit is None:
+            self.logger.error("No active slit selected.")
+            return
+        self.logger.info(f"Deactivating slit {self.active_slit}")
+        active_slit = self.slit_canvas.get_object_by_tag(self.active_slit.tag)
+        active_slit.color = 'green'
+        self.slit_canvas.delete_object_by_tag(self.active_slit.tag)
+        self.slit_canvas.add(active_slit)
+        
+        
 
     def open_raw_file(self, path):
         """Open a FITS file at the given path, and render into the viewer.
@@ -891,90 +931,3 @@ class DEIMOS(Instrument):
         # fulldata = np.rot90(fulldata)
         
         return fulldata
-    
-
-
-# # # # # # # # #
-# # Data Sources  #
-# # # # # # # # # #
-# class DataSource():
-#     """Abstract class representing the raw data source for the QL viewer.
-
-#     This class is used to define the interface for the viewer to get:
-#     1. The raw data (i.e. the full, mosaiced FITS frames being inspected)
-#     2. The slit edges (if available), which are used to overlay on the raw data
-
-#     The raw data is stored in the `raw_data` attribute as an ndarray.
-#     The slit edges are stored in the `slit_edges` attribute as a pypeit.slittrace.SlitTraceSet object.
-#     """
-    
-#     def __init__(self, logger, instrument) -> None:
-#         self.raw_data = None
-#         self.slit_edges = None
-#         self.logger = logger
-#         self.set_instrument(instrument)
-
-#     def get_raw_data(self) -> np.ndarray:
-#         """Return the raw data."""
-#         return self.raw_data
-    
-#     def get_slit_edges(self) -> SlitTraceSet:
-#         """Return the slit edges."""
-#         return self.slit_edges
-    
-#     def set_instrument(self, instrument_name: str):
-#         """Set the instrument for the data source."""
-#         if instrument_name == 'DEIMOS':
-#             self.instrument = DEIMOS(self.logger)
-#         else:
-#             raise ValueError(f"Instrument '{instrument_name}' not recognized.")
-    
-# class LocalDataSource(DataSource):
-
-#     def __init__(self, logger, instrument) -> None:
-#         super().__init__(logger, instrument)
-#         self.raw_filepath = None
-#         self.reduced_filepath = os.getcwd()
-
-#     def load(self, raw_filepath, reduced_filepath):
-#         self.raw_filepath = raw_filepath
-#         self.reduced_filepath = reduced_filepath
-
-#         self.load_data(raw_filepath)
-#         self.load_slit_edges(reduced_filepath)
-
-
-#     def load_data(self, raw_filepath) -> None:
-#         """Load the raw data from the FITS file.
-        
-#         """
-#         # Load the data
-#         hdul = fits.open(raw_filepath)
-#         self.raw_data = self.instrument.get_mosaic(hdul)
-#         hdul.close()
-    
-#     def load_slit_edges(self, reduced_filepath) -> None:
-#         """Uses PypeIt loaders to generate a SlitTraceSet object from a file.
-
-#         Parameters
-#         ----------
-#         reduced_filepath : Path or pathlike
-#             Path to the directory containing calibrations and reduced data.
-#         """
-
-#         # Find the Slits_ file within the reduced_filepath
-#         slits = Path(reduced_filepath).rglob('Slits_*.fits*')
-#         if len(slits) == 1:
-#             slits_path = slits[0]
-#         elif len(slits) == 0:
-#             raise FileNotFoundError("No Slits_ file found in the directory.")
-#         else:
-#             raise FileNotFoundError(f"Multiple Slits_ files found in the directory: {', '.join(slits)}")
-        
-#         try:
-#             self.slit_edges = SlitTraceSet.from_file(slits_path)
-#         except Exception as e:
-#             self.logger.error("Error loading SlitTraceSet from file: {e}")
-#             self.logger.info("Failed to load slits. Slit edges will not be displayed.")
-
-#         return
