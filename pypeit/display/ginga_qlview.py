@@ -46,6 +46,7 @@ import numpy as np
 from pathlib import Path
 import subprocess
 import threading
+import asyncio
 from ginga import GingaPlugin
 from ginga.misc import Bunch
 from ginga.gw import Widgets
@@ -56,6 +57,7 @@ from ginga.canvas.CanvasObject import get_canvas_types
 from ginga.canvas.types.basic import Polygon
 
 from ginga.qtw.QtHelp import QtGui, QtCore
+
 
 from pypeit import specobjs
 from pypeit import utils
@@ -71,6 +73,7 @@ __all__ = ['QLView']
 class QLView(GingaPlugin.LocalPlugin):
 
     def __init__(self, fv, fitsimage):
+
         """Constructor for the plugin."""
         # superclass defines some variables for us, like logger
         super().__init__(fv, fitsimage)
@@ -101,6 +104,8 @@ class QLView(GingaPlugin.LocalPlugin):
 
         self.raw_filepath = None
         self.reduced_filepath = None
+        self.redux_path = "/Users/mbrodheim/drp/QLViewer/redux_test"
+        self.reduction_control_elements = {}
         # self.data_source = LocalDataSource(self.logger, "DEIMOS")
 
 
@@ -212,7 +217,7 @@ class QLView(GingaPlugin.LocalPlugin):
         # # # # # # # # # # #
         fr = Widgets.Frame("Reduction Control")
         hbox = Widgets.HBox()
-        vbox_redux = Widgets.VBox()
+        self.vbox_redux = Widgets.VBox()
         self.slit_list_box = Widgets.ComboBox()
         self.slit_list_box.add_callback('activated', self.slit_list_box_cb)
         hbox.add_widget(self.slit_list_box)
@@ -220,15 +225,15 @@ class QLView(GingaPlugin.LocalPlugin):
         self.btn_reduce.set_tooltip("Reduce the selected slit")
         self.btn_reduce.add_callback('activated', self.reduce_slit_cb)
         hbox.add_widget(self.btn_reduce, stretch=0)
-        vbox_redux.add_widget(hbox, stretch=0)
+        self.vbox_redux.add_widget(hbox, stretch=0)
 
         self.display_slits_box = Widgets.CheckBox("Display Slits")
         self.display_slits_box.set_state(True)
         self.display_slits_box.add_callback('activated', self.display_slits_box_cb)
 
-        vbox_redux.add_widget(self.display_slits_box, stretch=0)
+        self.vbox_redux.add_widget(self.display_slits_box, stretch=0)
 
-        fr.set_widget(vbox_redux)
+        fr.set_widget(self.vbox_redux)
         vbox.add_widget(fr, stretch=0)
 
 
@@ -286,13 +291,27 @@ class QLView(GingaPlugin.LocalPlugin):
         command.append("--slitspatnum")
         command.append(f"{msc}:{self.slit_list_box.get_text()[1:]}")
         command.append("--redux_path")
-        command.append("/Users/mbrodheim/drp/QLViewer/redux_test")
+        command.append(self.redux_path)
         command.append("--skip_display")
         self.logger.info("Launching command: {0}".format(" ".join(command)))
 
-
-        # popenplus(self.show_reduced_spec, command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        # popen_w_cb(self.show_reduced_spec, command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         p = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+        # asyncio.run(self.monitor_reduction(p))
+        print("Launched reduction")
+
+        hbox, elements = self.make_reduced_slit_hbox()
+
+        self.vbox_redux.add_widget(hbox, stretch=0)
+        self.reduction_control_elements[self.slit_list_box.get_text()] = {"elements": elements, "hbox": hbox}
+        
+        # need to sleep for just long enough for the directory to be created
+        # redux_path = self.redux_path_from_filename(self.raw_filepath)
+        # while not os.path.exists(redux_path):
+            # self.logger.info(f"Waiting for {redux_path} to be created...")
+            # time.sleep(.5)
+        # self.add_dirs_to_watcher(self.redux_path_from_filename(self.raw_filepath))
 
         # out, err = p.communicate()
 
@@ -388,10 +407,12 @@ class QLView(GingaPlugin.LocalPlugin):
             self.browse(path, "raw")
         elif os.path.isfile(path):
             self.open_raw_file(path)
+
         else:
             self.logger.error("Invalid path entered.")
             self.raw_text_entry.set_text("Invalid path")
         self.raw_filepath = path
+
 
         # TODO: Handle the double-click event to load the FITS file
 
@@ -746,6 +767,7 @@ class QLView(GingaPlugin.LocalPlugin):
 
             # Set the raw filepath, now that we know its a FITS file
             self.raw_filepath = path
+            self.logger.info(f"Raw file loaded: {path}")
         else:
             self.logger.info("Not a FITS file. Ignoring.")
 
@@ -801,7 +823,62 @@ class QLView(GingaPlugin.LocalPlugin):
 
         self.fitsimage.add_callback('cursor-down', self.canvas_clicked_cb) 
 
+        self.watcher = QtCore.QFileSystemWatcher()
+        self.watcher.addPath(self.redux_path)
+        self.watcher.directoryChanged.connect(self.dir_change)
+
         self.redo()
+    
+    def dir_change(self, path):
+        print("Directory changed: ", path)
+        p = Path(path)
+        if path == self.redux_path:
+            self.logger.info("New directory detected in redux path, adding to watcher")
+            for child in p.iterdir():
+                self.add_dirs_to_watcher([child])
+        
+        p = p / "Science"
+        if not p.exists():
+            print("Not a science directory")
+            return
+        
+        science_files = list(p.glob("*.fits"))
+        if len(science_files) > 0:
+            self.logger.info("Reduced spectrum found.")
+            reduction_control = self.reduction_control_elements.get(self.slit_list_box.get_text(), None)
+            if reduction_control:
+                elements = reduction_control["elements"]
+                elements['button'].set_enabled(True)
+                elements['button'].add_callback('activated', lambda x: self.show_reduced_spec())
+            else:
+                self.logger.error("No Reduction slits to enable!")
+
+
+        # for directory in p.iterdir():
+        #     if directory.is_dir():
+        #         print(f"\tFound directory: {directory.name}")
+        #         science_name = Path(self.raw_filepath).name.split(".fits")[0]
+        #         print("\tIf there's a science directory, it should look like this: ", science_name)
+        #         print(f"\tLooing for {science_name} in {directory.name}")
+        #         if science_name in directory.name:
+        #             print("\t\tOK, this is a science directory...")
+        #             for child in directory.iterdir():
+        #                 if "Science" in child.name:
+        #                     print("\t\t\tOK, this is a science directory with data inside")
+        #                     self.logger.info("Science directory found.")
+        #                     for file in child.iterdir():
+        #                         if file.suffix == ".fits" and "spec1d" in file.name:
+        #                             print("\t\t\t\tOK, there is a spec1d file")
+        #                             self.logger.info("Reduced spectrum found.")
+        #                             reduction_control = self.reduction_control_elements.get(self.slit_list_box.get_text(), None)
+        #                             if reduction_control:
+        #                                 print("\t\t\t\t\tOK, I'm ready to show this slit")
+        #                                 elements = reduction_control["elements"]
+        #                                 elements['button'].set_enabled(True)
+        #                                 elements['button'].add_callback('activated', self.show_reduced_spec)
+        #                             else:
+        #                                 print("\t\t\t\t\t\tNo reduction control found")
+
 
     def stop(self):
         """Method called when the plugin is deactivated.
@@ -819,9 +896,51 @@ class QLView(GingaPlugin.LocalPlugin):
 
     def show_reduced_spec(self):
         """Show the reduced spectrum in a new channel"""
-        new_ch_name = 'Spec1D'
+        print("Reduction completed, showing spec")
+        # subprocess.Popen(["pypeit_show_1dspec",
+        #                   "--extract",
+        #                   "BOX",
+        #                   "/Users/mbrodheim/drp/QLViewer/redux_test/DE.20170425.51771/Science/spec1d_DE.20170425.51771-dra11_DEIMOS_20170425T142245.350.fits"])
+        self.logger.info("Showing reduced spectrum")
+        new_ch_name = 'Spec1D' + self.slit_list_box.get_text()
         self.fv.load_file("/Users/mbrodheim/drp/QLViewer/redux_test/DE.20170425.51771/Science/spec1d_DE.20170425.51771-dra11_DEIMOS_20170425T142245.350.fits", chname=new_ch_name)
         self.fv.start_local_plugin(new_ch_name, 'Spec1dView')
+    
+    def make_reduced_slit_hbox(self):
+
+        # def timer_cb():
+        #     elements['timer_left'].set_text(f"Time Remaining: {elements['timer'].remainingTime() / 1000} s")
+
+        elements = {}
+        hbox = Widgets.HBox()
+        elements['name'] = Widgets.Label("Slit:")
+        elements['button'] = Widgets.Button("Show")
+        elements['button'].set_enabled(False)
+
+        elements['timer_left'] = Widgets.Label("Time Remainig:")
+        
+        # elements['timer'] = QtCore.QTimer()
+        # elements['timer'].timeout.connect(timer_cb)
+
+        hbox.add_widget(elements['name'], stretch=0)
+        hbox.add_widget(elements['button'], stretch=1)
+        hbox.add_widget(elements['timer_left'], stretch=0)
+        return hbox, elements
+    
+    def add_dirs_to_watcher(self, paths):
+        for path in paths:
+            if len(self.watcher.directories()) > 255:
+                self.logger.error("Too many directories being watched. Cannot add more.")
+                return
+            self.logger.info(f"Adding {path} to watcher")
+            if Path(path).exists():
+                self.watcher.addPath(path)
+            else:
+                self.logger.error(f"Path {path} does not exist. Cannot add to watcher.")
+
+    def redux_path_from_filename(self, filename):
+        p = Path(filename)
+        return os.path.join(self.redux_path,  p.name.split(".fits")[0])
 
     def __str__(self):
         # necessary to identify the plugin and provide correct operation in Ginga
