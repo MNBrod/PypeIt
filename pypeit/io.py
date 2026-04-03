@@ -19,6 +19,8 @@ from packaging import version
 
 from IPython import embed
 
+import yaml
+
 import numpy
 
 from astropy.io import fits
@@ -391,8 +393,14 @@ def dict_to_lines(d, level=0, use_repr=False):
         if isinstance(d[key], dict):
             lines += [key.rjust(w) + ':'] + dict_to_lines(d[key], level=level+1, use_repr=use_repr)
             continue
-        lines += [key.rjust(w) + ': ' + 
-                  (d[key].__repr__() if use_repr and hasattr(d[key], '__repr__') else str(d[key]))]
+        if use_repr and hasattr(d[key], '__repr__'):
+            val_str = d[key].__repr__()
+        else:
+            # Use yaml.dump for scalar serialization so that values
+            # containing YAML-special characters (e.g. a leading '[' or
+            # a bare colon) are properly quoted in the output.
+            val_str = yaml.dump(d[key], default_flow_style=True).rstrip('\n...\n').rstrip()
+        lines += [key.rjust(w) + ': ' + val_str]
     return lines
 
 
