@@ -100,14 +100,26 @@ def test_boxcar_smooth_rows():
 
 
 def test_yamlify():
-    """ This tests the yamlify method and also the approach to 
+    """ This tests the yamlify method and also the approach to
     writing and reading the Setup block of PypeIt"""
 
-    obj = dict(a=1., b='acb', datasec='[2:23,:2048]', d=dict(c=3))
+    # 'amp' exercises the colon-in-value case (e.g. DEIMOS AMPMODE = 'SINGLE:B').
+    # 'datasec' exercises the leading-bracket case ('[2:23,:2048]').
+    obj = dict(a=1., b='acb', amp='SINGLE:B', datasec='[2:23,:2048]', d=dict(c=3))
 
     new_obj = utils.yamlify(obj)
 
-    # Write
+    # Round-trip through yaml.dump / yaml.safe_load (the production path used
+    # by PypeItFile.write).
+    rt = yaml.safe_load(yaml.dump(new_obj))
+    assert rt['amp'] == 'SINGLE:B', \
+        f"amp round-trip failed: got {rt['amp']!r}, expected 'SINGLE:B'"
+    assert rt['datasec'] == '[2:23,:2048]', \
+        f"datasec round-trip failed: got {rt['datasec']!r}"
+    assert rt['b'] == 'acb'
+    assert rt['a'] == 1.0
+
+    # Write via dict_to_lines (legacy path used by write_sorted_file).
     tst_file = data_output_path('tst.yaml')
     with open(tst_file, 'w') as f:
         setup_lines = io.dict_to_lines(new_obj, level=1)
@@ -122,6 +134,10 @@ def test_yamlify():
     # Add back in \n
     ystr = '\n'.join(lines)
     sdict = yaml.safe_load(ystr)
+
+    assert sdict['amp'] == 'SINGLE:B', \
+        f"amp dict_to_lines round-trip failed: got {sdict['amp']!r}"
+    assert sdict['b'] == 'acb'
 
     # Clean up
     os.remove(tst_file)
