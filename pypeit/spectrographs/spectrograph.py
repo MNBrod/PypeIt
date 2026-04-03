@@ -53,6 +53,27 @@ from pypeit.images.mosaic import Mosaic
 # TODO: Create an EchelleSpectrograph derived class that holds all of
 # the echelle specific methods.
 
+
+def _norm_config_str(v):
+    """Strip spurious embedded double-quotes from a configuration value.
+
+    This serves as a backwards-compatability function to allow PypeIt to
+    properly parse colons in parsed text.
+
+    Older versions of :func:`~pypeit.utils.yamlify` wrapped strings that
+    contained a colon in literal double-quote characters (e.g.
+    ``'SINGLE:B'`` became ``'"SINGLE:B"'``).  When serialised by
+    ``yaml.dump`` and read back by ``yaml.safe_load`` the embedded ``"``
+    characters were preserved as part of the value, causing
+    :meth:`Spectrograph.same_configuration` to fail for any instrument
+    whose :meth:`configuration_keys` included a colon-containing value
+    (e.g. DEIMOS ``AMPMODE``).
+    """
+    if isinstance(v, str) and len(v) >= 2 and v[0] == '"' and v[-1] == '"':
+        return v[1:-1]
+    return v
+
+
 class Spectrograph:
     """
     Abstract base class for all instrument-specific behavior in PypeIt.
@@ -931,7 +952,8 @@ class Spectrograph:
                     
                     matched += [np.isclose(configs[_cfg_id][key], configs[cfg_id[0]][key], rtol=self.meta[key].get('rtol',0.0), atol=self.meta[key].get('atol',0.0), equal_nan=True)]
                 else:
-                    matched += [np.all(configs[cfg_id[0]][key] == configs[_cfg_id][key])]
+                    matched += [np.all(_norm_config_str(configs[cfg_id[0]][key])
+                                       == _norm_config_str(configs[_cfg_id][key]))]
             if not np.all(matched):
                 # We found a difference so return
                 return False
