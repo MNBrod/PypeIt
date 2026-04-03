@@ -54,7 +54,7 @@ from pypeit.images.mosaic import Mosaic
 # the echelle specific methods.
 
 
-def _norm_config_str(v):
+def strip_end_quotes(string):
     """Strip spurious embedded double-quotes from a configuration value.
 
     This serves as a backwards-compatability function to allow PypeIt to
@@ -69,9 +69,9 @@ def _norm_config_str(v):
     whose :meth:`configuration_keys` included a colon-containing value
     (e.g. DEIMOS ``AMPMODE``).
     """
-    if isinstance(v, str) and len(v) >= 2 and v[0] == '"' and v[-1] == '"':
-        return v[1:-1]
-    return v
+    if isinstance(string, str) and len(string) >= 2 and string[0] == '"' and string[-1] == '"':
+        return string[1:-1]
+    return string
 
 
 class Spectrograph:
@@ -952,8 +952,8 @@ class Spectrograph:
                     
                     matched += [np.isclose(configs[_cfg_id][key], configs[cfg_id[0]][key], rtol=self.meta[key].get('rtol',0.0), atol=self.meta[key].get('atol',0.0), equal_nan=True)]
                 else:
-                    matched += [np.all(_norm_config_str(configs[cfg_id[0]][key])
-                                       == _norm_config_str(configs[_cfg_id][key]))]
+                    matched += [np.all(strip_end_quotes(configs[cfg_id[0]][key])
+                                       == strip_end_quotes(configs[_cfg_id][key]))]
             if not np.all(matched):
                 # We found a difference so return
                 return False
