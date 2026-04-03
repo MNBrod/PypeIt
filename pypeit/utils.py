@@ -1545,11 +1545,9 @@ def yamlify(obj, debug=False):
     #        obj = obj.decode('utf-8')
     elif isinstance(obj, (np.str_, str)):
         obj = str(obj)
-        # Worry about colons!
-        if ':' in obj:
-            # Do not add quotes if they've already been added
-            if not obj.startswith('"'):
-                obj = '"' + str(obj) + '"'
+        # Previously this included an explicit call to wrap colon-containing
+        # strings in quotes, this is now handled by the yaml package directly
+        # in io.py
     elif isinstance(obj, units.Quantity):
         try:
             obj = obj.value.tolist()
